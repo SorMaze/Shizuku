@@ -1,14 +1,13 @@
 name: Release from artifact
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_id:
-        description: 'ID of the build run that uploaded the shizuku-apks artifact'
-        required: true
-      tag:
-        description: 'Existing tag to create the release for'
-        required: true
+  push:
+    tags:
+      - 'rel-*'
+
+env:
+  BUILD_RUN_ID: '39811738315'
+  TARGET_TAG: 'v13.6.0.r1093-android17-fix'
 
 permissions:
   contents: write
@@ -23,12 +22,12 @@ jobs:
         with:
           name: shizuku-apks
           path: apks
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ env.BUILD_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ env.TARGET_TAG }}
           prerelease: true
           files: apks/apk/release/*.apk
           body: |
