@@ -4,6 +4,11 @@ on:
   push:
     paths-ignore:
       - '.github/ISSUE_TEMPLATE'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -30,13 +35,7 @@ jobs:
           echo ${{ secrets.KEYSTORE }} | base64 --decode > key.jks
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          dependency-graph: generate-and-submit
-          build-scan-publish: true
-          build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
-          build-scan-terms-of-use-agree: "yes"
       - name: Build with Gradle
-        id: buildWithGradle
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
           echo 'android.sdk.channel=3' >> gradle.properties
@@ -44,11 +43,31 @@ jobs:
           echo 'org.gradle.caching=true' >> gradle.properties
           echo 'org.gradle.parallel=true' >> gradle.properties
           ./gradlew :manager:assemble
-          releaseName=`ls manager/build/outputs/apk/release/shizuku*-v*-release.apk | awk -F '(/|-release.apk)' '{print $6}'` && echo "releaseName=$releaseName" >> $GITHUB_OUTPUT
       - name: Upload release
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.buildWithGradle.outputs.releaseName }}
+          name: shizuku-apks
           path: "manager/build/outputs"
           compression-level: 9
+      - name: Create GitHub Release
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: manager/build/outputs/apk/release/*.apk
+          body: |
+            ## ⚠️ 签名风险警告 / Signature Warning
+
+            本 Release 的 APK 使用 **debug 调试密钥**签名（CI 无发布密钥），与官方 Shizuku 签名**不同**：
+
+            - **无法覆盖安装官方版**，必须先卸载官方版再安装（已授权应用列表保存在 server 侧，不受影响；应用自身设置会重置）
+            - 签名不同意味着**基于签名校验的权限/组件交互与官方版不互通**（例如其他应用若通过 `checkSignatures` 验证 Shizuku 会失败）
+            - 无法通过 Google Play / 官方渠道升级，之后装回官方版也需先卸载本版本
+            - 仅供测试 Android 17 修复使用，**请勿当作官方版本分发**
+
+            ## 内容
+
+            修复 Android 17 (API 37) 上"已授权应用"列表为空的问题（RikkaApps/Shizuku#1988, RikkaApps/Shizuku#2180）。
+
+            按设备架构选择 APK，不确定就选 `release.apk`（universal 通用包）。
