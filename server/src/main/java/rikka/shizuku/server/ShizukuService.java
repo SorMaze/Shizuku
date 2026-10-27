@@ -381,6 +381,9 @@ public class ShizukuService extends Service<ShizukuUserServiceManager, ShizukuCl
 
         int userId = UserHandleCompat.getUserId(uid);
 
+        // Record the decision before framework calls can fail or clients reconnect.
+        configManager.update(uid, null, mask, value);
+
         if ((mask & ConfigManager.MASK_PERMISSION) != 0) {
             boolean allowed = (value & ConfigManager.FLAG_ALLOWED) != 0;
 
@@ -391,13 +394,15 @@ public class ShizukuService extends Service<ShizukuUserServiceManager, ShizukuCl
                 packages.add(record.packageName);
             }
 
-            for (String packageName : packages) {
-                if (!allowed) {
-                    // Daemon user services can outlive every attached client process.
+            if (!allowed) {
+                // Daemon user services can outlive every attached client process.
+                for (String packageName : packages) {
                     onPermissionRevoked(packageName);
                     ActivityManagerApis.forceStopPackageNoThrow(packageName, userId);
                 }
+            }
 
+            for (String packageName : packages) {
                 PackageInfo pi = PackageManagerApis.getPackageInfoNoThrow(packageName, PackageManager.GET_PERMISSIONS, userId);
                 if (pi == null || pi.requestedPermissions == null || !ArraysKt.contains(pi.requestedPermissions, PERMISSION)) {
                     continue;
@@ -410,8 +415,6 @@ public class ShizukuService extends Service<ShizukuUserServiceManager, ShizukuCl
                 }
             }
         }
-
-        configManager.update(uid, null, mask, value);
     }
 
     private void onPermissionRevoked(String packageName) {

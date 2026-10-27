@@ -17,6 +17,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Parcel;
+import android.os.RemoteException;
 import android.system.Os;
 
 import org.junit.After;
@@ -143,6 +144,26 @@ public class ShizukuServiceTest {
         activities.verifyNoInteractions();
         permissions.verify(() -> PermissionManagerApis.grantRuntimePermission(
                 CLIENT_PACKAGE, ServerConstants.PERMISSION, CLIENT_USER));
+    }
+
+    @Test
+    public void revokeKeepsDecisionWhenFrameworkPermissionRevocationFails() throws Exception {
+        String sharedPackage = "test.shared.client";
+        packages.when(() -> PackageManagerApis.getPackagesForUidNoThrow(CLIENT_UID))
+                .thenReturn(Arrays.asList(CLIENT_PACKAGE, sharedPackage));
+        PackageInfo info = new PackageInfo();
+        info.requestedPermissions = new String[]{ServerConstants.PERMISSION};
+        packages.when(() -> PackageManagerApis.getPackageInfoNoThrow(
+                CLIENT_PACKAGE, PackageManager.GET_PERMISSIONS, CLIENT_USER)).thenReturn(info);
+        permissions.when(() -> PermissionManagerApis.revokeRuntimePermission(
+                CLIENT_PACKAGE, ServerConstants.PERMISSION, CLIENT_USER)).thenThrow(new RemoteException());
+
+        assertThrows(RemoteException.class, () -> service.updateFlagsForUid(
+                CLIENT_UID, ConfigManager.MASK_PERMISSION, 0));
+
+        verify(config).update(CLIENT_UID, null, ConfigManager.MASK_PERMISSION, 0);
+        verify(userServices).removeUserServicesForPackage(CLIENT_PACKAGE);
+        verify(userServices).removeUserServicesForPackage(sharedPackage);
     }
 
     @Test
