@@ -2,10 +2,14 @@ name: App
 
 on:
   push:
+    branches:
+      - '**'
     paths-ignore:
-      - '.github/ISSUE_TEMPLATE'
+      - '.github/ISSUE_TEMPLATE/**'
     tags:
       - 'v*'
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,13 +30,29 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
       - name: Write key
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
         run: |
-          echo KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} > signing.properties
-          echo KEYSTORE_ALIAS=${{ secrets.KEYSTORE_ALIAS }} >> signing.properties
-          echo KEYSTORE_ALIAS_PASSWORD='${{ secrets.KEYSTORE_ALIAS_PASSWORD }}' >> signing.properties
-          echo KEYSTORE_FILE=../key.jks >> signing.properties
-          echo ${{ secrets.KEYSTORE }} | base64 --decode > key.jks
+          if [[ -z "$KEYSTORE" ]]; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo '::error::Tagged releases require a persistent signing key in Actions secrets.'
+              exit 1
+            fi
+            echo 'No signing key configured; using debug signing for this build.'
+            exit 0
+          fi
+          : "${KEYSTORE_PASSWORD:?Missing KEYSTORE_PASSWORD secret}"
+          : "${KEYSTORE_ALIAS:?Missing KEYSTORE_ALIAS secret}"
+          : "${KEYSTORE_ALIAS_PASSWORD:?Missing KEYSTORE_ALIAS_PASSWORD secret}"
+          printf '%s\n' "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" \
+            "KEYSTORE_ALIAS=$KEYSTORE_ALIAS" \
+            "KEYSTORE_ALIAS_PASSWORD=$KEYSTORE_ALIAS_PASSWORD" \
+            'KEYSTORE_FILE=../key.jks' > signing.properties
+          printf '%s' "$KEYSTORE" | base64 --decode > key.jks
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Build with Gradle
@@ -42,7 +62,16 @@ jobs:
           echo 'android.native.buildOutput=verbose' >> gradle.properties
           echo 'org.gradle.caching=true' >> gradle.properties
           echo 'org.gradle.parallel=true' >> gradle.properties
-          ./gradlew :manager:assemble
+          ./gradlew :server:testDebugUnitTest :manager:assemble :manager:lintDebug
+      - name: Upload check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-reports
+          path: |
+            server/build/reports/tests/testDebugUnitTest
+            server/build/test-results/testDebugUnitTest
+            manager/build/reports/lint-results-debug.*
       - name: Upload release
         if: success()
         uses: actions/upload-artifact@v4
@@ -59,15 +88,18 @@ jobs:
           body: |
             ## ⚠️ 签名风险警告 / Signature Warning
 
-            本 Release 的 APK 使用 **debug 调试密钥**签名（CI 无发布密钥），与官方 Shizuku 签名**不同**：
+            本 Release 的 APK 使用此 fork 在 Actions Secrets 中配置的**固定测试密钥**签名，与官方 Shizuku 签名**不同**：
 
             - **无法覆盖安装官方版**，必须先卸载官方版再安装（已授权应用列表保存在 server 侧，不受影响；应用自身设置会重置）
             - 签名不同意味着**基于签名校验的权限/组件交互与官方版不互通**（例如其他应用若通过 `checkSignatures` 验证 Shizuku 会失败）
             - 无法通过 Google Play / 官方渠道升级，之后装回官方版也需先卸载本版本
+            - 后续使用同一测试密钥签名的本 fork 版本可覆盖升级；之前 CI 随机调试签名的版本仍需先卸载
             - 仅供测试 Android 17 修复使用，**请勿当作官方版本分发**
 
             ## 内容
 
             修复 Android 17 (API 37) 上"已授权应用"列表为空的问题（RikkaApps/Shizuku#1988, RikkaApps/Shizuku#2180）。
+
+            修复客户端退出后撤权漏清理后台 UserService 的问题，并为应用列表接口补充管理器鉴权。
 
             按设备架构选择 APK，不确定就选 `release.apk`（universal 通用包）。

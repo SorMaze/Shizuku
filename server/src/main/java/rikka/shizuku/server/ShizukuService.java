@@ -36,8 +36,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import kotlin.collections.ArraysKt;
 import moe.shizuku.api.BinderContainer;
@@ -379,39 +381,40 @@ public class ShizukuService extends Service<ShizukuUserServiceManager, ShizukuCl
 
         int userId = UserHandleCompat.getUserId(uid);
 
+        // Record the decision before framework calls can fail or clients reconnect.
+        configManager.update(uid, null, mask, value);
+
         if ((mask & ConfigManager.MASK_PERMISSION) != 0) {
             boolean allowed = (value & ConfigManager.FLAG_ALLOWED) != 0;
-            boolean denied = (value & ConfigManager.FLAG_DENIED) != 0;
 
+            Set<String> packages = new LinkedHashSet<>(PackageManagerApis.getPackagesForUidNoThrow(uid));
             List<ClientRecord> records = clientManager.findClients(uid);
             for (ClientRecord record : records) {
-                if (allowed) {
-                    record.allowed = true;
-                } else {
-                    record.allowed = false;
-                    ActivityManagerApis.forceStopPackageNoThrow(record.packageName, UserHandleCompat.getUserId(record.uid));
-                    onPermissionRevoked(record.packageName);
+                record.allowed = allowed;
+                packages.add(record.packageName);
+            }
+
+            if (!allowed) {
+                // Daemon user services can outlive every attached client process.
+                for (String packageName : packages) {
+                    onPermissionRevoked(packageName);
+                    ActivityManagerApis.forceStopPackageNoThrow(packageName, userId);
                 }
             }
 
-            for (String packageName : PackageManagerApis.getPackagesForUidNoThrow(uid)) {
+            for (String packageName : packages) {
                 PackageInfo pi = PackageManagerApis.getPackageInfoNoThrow(packageName, PackageManager.GET_PERMISSIONS, userId);
                 if (pi == null || pi.requestedPermissions == null || !ArraysKt.contains(pi.requestedPermissions, PERMISSION)) {
                     continue;
                 }
 
-                int deviceId = 0;//Context.DEVICE_ID_DEFAULT
                 if (allowed) {
                     PermissionManagerApis.grantRuntimePermission(packageName, PERMISSION, userId);
                 } else {
                     PermissionManagerApis.revokeRuntimePermission(packageName, PERMISSION, userId);
                 }
-
-                // TODO kill user service using
             }
         }
-
-        configManager.update(uid, null, mask, value);
     }
 
     private void onPermissionRevoked(String packageName) {
@@ -461,6 +464,7 @@ public class ShizukuService extends Service<ShizukuUserServiceManager, ShizukuCl
         //LOGGER.d("transact: code=%d, calling uid=%d", code, Binder.getCallingUid());
         if (code == ServerConstants.BINDER_TRANSACTION_getApplications) {
             data.enforceInterface(ShizukuApiConstants.BINDER_DESCRIPTOR);
+            enforceManagerPermission("getApplications");
             int userId = data.readInt();
             ParcelableListSlice<PackageInfo> result = getApplications(userId);
             reply.writeNoException();
