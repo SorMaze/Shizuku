@@ -74,6 +74,14 @@ https://github.com/RikkaApps/Shizuku-API#migration-guide-for-existing-applicatio
 
 The `:manager:assembleDebug` task generates a debuggable server. You can attach a debugger to `shizuku_server` to debug the server. Be aware that, in Android Studio, "Run/Debug configurations" - "Always install with package manager" should be checked, so that the server will use the latest code.
 
+### CI checks and signing in this fork
+
+CI runs the server permission regression tests, Debug and Release builds, and Android Lint on branch pushes and pull requests. It can also be started manually. Run the same checks locally with `./gradlew :server:testDebugUnitTest :manager:assemble :manager:lintDebug` (Java 21 and the Android SDK are required).
+
+`manager/lint-baseline.xml` records the existing Lint findings from commit `d2413029`, mainly incomplete translations and resource formatting. CI fails on new Lint errors; the baseline is not a claim that the existing findings are fixed.
+
+Tagged `v*` builds create prereleases and require persistent signing credentials in the repository's Actions secrets: `KEYSTORE` (base64-encoded keystore), `KEYSTORE_PASSWORD`, `KEYSTORE_ALIAS`, and `KEYSTORE_ALIAS_PASSWORD`. Keep the same key and a secure backup for subsequent releases. Branch builds without secrets and pull request builds use debug signing. The fork's signing key is different from the official Shizuku key, and APKs from older CI runs with randomly generated debug keys require uninstalling before switching to the persistent key.
+
 ## License
 
 All code files in this project are licensed under Apache 2.0
